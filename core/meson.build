@@ -18,6 +18,7 @@ core_files = files(
     'Services/CalDAV/CalDAVClient.vala',
     'Services/CalDAV/WebDAVClient.vala',
     'Services/CalDAV/Providers/Nextcloud.vala',
+    'Services/CalDAV/Providers/Zoho.vala',
 
     'Services/Chrono/Chrono.vala',
     'Services/Chrono/Enum.vala',
