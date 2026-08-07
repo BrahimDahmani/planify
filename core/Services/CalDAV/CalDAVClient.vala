@@ -153,6 +153,27 @@ public class Services.CalDAV.CalDAVClient : Services.CalDAV.WebDAVClient {
                     project.source_id = source.id;
 
                     projects.add (project);
+                } else if (should_probe_calendar (resourcetype, supported_calendar, get_absolute_url (href))) {
+                    // Fallback: probe calendar for Zoho or other providers that don't advertise VTODO
+                    try {
+                        var probe_result = yield Services.CalDAV.Providers.Zoho.probe_calendar (
+                            get_absolute_url (href),
+                            session,
+                            base_url,
+                            username,
+                            password,
+                            cancellable,
+                            ignore_ssl
+                        );
+
+                        if (probe_result == Services.CalDAV.Providers.ZohoProbeResult.VTODO_FOUND) {
+                            var project = new Objects.Project.from_propstat (propstat, get_absolute_url (href));
+                            project.source_id = source.id;
+                            projects.add (project);
+                        }
+                    } catch (Error e) {
+                        warning ("Failed to probe calendar at %s: %s", get_absolute_url (href), e.message);
+                    }
                 }
             }
         }
@@ -229,6 +250,40 @@ public class Services.CalDAV.CalDAVClient : Services.CalDAV.WebDAVClient {
                             project.update_from_propstat (propstat, false);
                             Services.Store.instance ().update_project (project);
                         }
+                    }
+                } else if (should_probe_calendar (resourcetype, supported_calendar, get_absolute_url (href))) {
+                    // Fallback: probe calendar for Zoho or other providers that don't advertise VTODO
+                    try {
+                        var probe_result = yield Services.CalDAV.Providers.Zoho.probe_calendar (
+                            get_absolute_url (href),
+                            session,
+                            base_url,
+                            username,
+                            password,
+                            cancellable,
+                            ignore_ssl
+                        );
+
+                        if (probe_result == Services.CalDAV.Providers.ZohoProbeResult.VTODO_FOUND) {
+                            var name = propstat.get_first_prop_with_tagname ("displayname");
+
+                            if (href != null && name != null) {
+                                Objects.Project ? project = Services.Store.instance ().get_project_via_url (get_absolute_url (href));
+
+                                if (project == null) {
+                                    project = new Objects.Project.from_propstat (propstat, get_absolute_url (href));
+                                    project.source_id = source.id;
+
+                                    Services.Store.instance ().insert_project (project);
+                                    yield fetch_items_for_project (project, cancellable);
+                                } else {
+                                    project.update_from_propstat (propstat, false);
+                                    Services.Store.instance ().update_project (project);
+                                }
+                            }
+                        }
+                    } catch (Error e) {
+                        warning ("Failed to probe calendar at %s during sync: %s", get_absolute_url (href), e.message);
                     }
                 }
             }
@@ -671,6 +726,39 @@ public class Services.CalDAV.CalDAVClient : Services.CalDAV.WebDAVClient {
                     return true;
                 }
             }
+        }
+
+        return false;
+    }
+
+    private bool should_probe_calendar (GXml.DomElement? resourcetype, GXml.DomElement? supported_calendar, string calendar_url) {
+        // Only probe if it's a calendar but doesn't explicitly support VTODO
+        if (resourcetype == null) {
+            return false;
+        }
+
+        bool is_calendar = resourcetype.get_elements_by_tag_name ("calendar").length > 0;
+        if (!is_calendar) {
+            return false;
+        }
+
+        // If supported_calendar is null or doesn't list VTODO, and it's a Zoho endpoint, probe it
+        if (Services.CalDAV.Providers.Zoho.is_zoho_endpoint (calendar_url)) {
+            // For Zoho, probe if supported_calendar is missing or doesn't include VTODO
+            if (supported_calendar == null) {
+                return true;
+            }
+
+            var calendar_comps = supported_calendar.get_elements_by_tag_name ("comp");
+            bool has_vtodo = false;
+            foreach (GXml.DomElement calendar_comp in calendar_comps) {
+                if (calendar_comp.get_attribute ("name") == "VTODO") {
+                    has_vtodo = true;
+                    break;
+                }
+            }
+            
+            return !has_vtodo;
         }
 
         return false;
